@@ -27,7 +27,7 @@ import {
   HStack,
   Tooltip,
 } from '@chakra-ui/react'
-import { FaShare, FaCalendar, FaBell, FaEllipsisV } from 'react-icons/fa'
+import { FaShare, FaCalendar, FaBell, FaEllipsisV, FaEdit, FaTrash } from 'react-icons/fa'
 import DatePicker from 'react-datepicker'
 import "react-datepicker/dist/react-datepicker.css"
 import { supabase } from '../lib/supabaseClient'
@@ -40,7 +40,25 @@ export default function Dashboard() {
   const [dueDate, setDueDate] = useState(null)
   const [shareEmail, setShareEmail] = useState('')
   const [notifications, setNotifications] = useState([])
+  const [selectedNotification, setSelectedNotification] = useState(null)
+  const [editTodo, setEditTodo] = useState('')
+  const [editDueDate, setEditDueDate] = useState(null)
   const { isOpen, onOpen, onClose } = useDisclosure()
+  const { 
+    isOpen: isEditOpen, 
+    onOpen: onEditOpen, 
+    onClose: onEditClose 
+  } = useDisclosure()
+  const {
+    isOpen: isNotificationOpen,
+    onOpen: onNotificationOpen,
+    onClose: onNotificationClose
+  } = useDisclosure()
+  const {
+    isOpen: isNotificationDetailOpen,
+    onOpen: onNotificationDetailOpen,
+    onClose: onNotificationDetailClose
+  } = useDisclosure()
   const { user } = useAuth()
   const toast = useToast()
 
@@ -107,6 +125,44 @@ export default function Dashboard() {
       setNotifications(data || [])
     }
   }
+
+  const markNotificationAsRead = async (notificationId) => {
+    const { error } = await supabase
+      .from('notifications')
+      .update({ read: true })
+      .eq('id', notificationId)
+
+    if (error) {
+      console.error('Error marking notification as read:', error)
+    } else {
+      // Update the local state to reflect the change
+      setNotifications(notifications.map(notification =>
+        notification.id === notificationId
+          ? { ...notification, read: true }
+          : notification
+      ))
+    }
+  }
+
+  const markAllNotificationsAsRead = async () => {
+    const { error } = await supabase
+      .from('notifications')
+      .update({ read: true })
+      .eq('user_id', user.id)
+      .eq('read', false)
+
+    if (error) {
+      console.error('Error marking all notifications as read:', error)
+    } else {
+      // Update the local state to reflect the change
+      setNotifications(notifications.map(notification => ({
+        ...notification,
+        read: true
+      })))
+    }
+  }
+
+  const hasUnreadNotifications = notifications.some(notification => !notification.read)
 
   const addTodo = async () => {
     if (!newTodo.trim()) return
@@ -256,27 +312,164 @@ export default function Dashboard() {
     onOpen()
   }
 
+  const handleEdit = (todo) => {
+    setSelectedTodo(todo)
+    setEditTodo(todo.title)
+    setEditDueDate(todo.due_date ? new Date(todo.due_date) : null)
+    onEditOpen()
+  }
+
+  const updateTodo = async () => {
+    if (!editTodo.trim() || !selectedTodo) return
+
+    const { error } = await supabase
+      .from('todos')
+      .update({
+        title: editTodo,
+        due_date: editDueDate,
+      })
+      .eq('id', selectedTodo.id)
+
+    if (error) {
+      toast({
+        title: 'Error updating todo',
+        description: error.message,
+        status: 'error',
+      })
+    } else {
+      toast({
+        title: 'Success',
+        description: 'Todo updated successfully',
+        status: 'success',
+      })
+      onEditClose()
+      fetchTodos()
+    }
+  }
+
+  const deleteTodo = async (todoId) => {
+    const { error } = await supabase
+      .from('todos')
+      .delete()
+      .eq('id', todoId)
+
+    if (error) {
+      toast({
+        title: 'Error deleting todo',
+        description: error.message,
+        status: 'error',
+      })
+    } else {
+      toast({
+        title: 'Success',
+        description: 'Todo deleted successfully',
+        status: 'success',
+      })
+      fetchTodos()
+    }
+  }
+
   return (
     <Container maxW="container.md" py={8}>
       <Stack spacing={8}>
-        <HStack>
-          <Input
-            value={newTodo}
-            onChange={(e) => setNewTodo(e.target.value)}
-            placeholder="Add a new todo..."
-            onKeyPress={(e) => {
-              if (e.key === 'Enter') {
-                addTodo()
-              }
-            }}
-          />
-          <Tooltip label="Set due date">
-            <IconButton
-              icon={<FaCalendar />}
-              onClick={() => setDueDate(new Date())}
+        <HStack justify="space-between">
+          <HStack>
+            <Input
+              value={newTodo}
+              onChange={(e) => setNewTodo(e.target.value)}
+              placeholder="Add a new todo..."
+              onKeyPress={(e) => {
+                if (e.key === 'Enter') {
+                  addTodo()
+                }
+              }}
             />
-          </Tooltip>
-          <Button onClick={addTodo}>Add</Button>
+            <Tooltip label="Set due date">
+              <IconButton
+                icon={<FaCalendar />}
+                onClick={() => setDueDate(new Date())}
+              />
+            </Tooltip>
+            <Button onClick={addTodo}>Add</Button>
+          </HStack>
+          <Menu>
+            <MenuButton
+              as={IconButton}
+              aria-label="Notifications"
+              icon={
+                <Box position="relative">
+                  <FaBell />
+                  {hasUnreadNotifications && (
+                    <Box
+                      position="absolute"
+                      top="-2px"
+                      right="-2px"
+                      bg="red.500"
+                      borderRadius="full"
+                      w="2"
+                      h="2"
+                    />
+                  )}
+                </Box>
+              }
+              variant="ghost"
+            />
+            <MenuList maxH="300px" overflowY="auto">
+              {notifications.length === 0 ? (
+                <MenuItem>No new notifications</MenuItem>
+              ) : (
+                <>
+                  {notifications.slice(0, 5).map((notification) => (
+                    <MenuItem 
+                      key={notification.id} 
+                      fontSize="sm"
+                      onClick={() => {
+                        setSelectedNotification(notification)
+                        onNotificationDetailOpen()
+                        if (!notification.read) {
+                          markNotificationAsRead(notification.id)
+                        }
+                      }}
+                    >
+                      <HStack spacing={2} flex={1}>
+                        {!notification.read && (
+                          <Box
+                            w="2"
+                            h="2"
+                            bg="blue.500"
+                            borderRadius="full"
+                          />
+                        )}
+                        <Text>
+                          {notification.content.length > 100 
+                            ? `${notification.content.substring(0, 100)}...` 
+                            : notification.content}
+                        </Text>
+                      </HStack>
+                    </MenuItem>
+                  ))}
+                  {notifications.length > 5 && (
+                    <MenuItem
+                      onClick={onNotificationOpen}
+                      color="blue.500"
+                      fontWeight="semibold"
+                    >
+                      View all notifications
+                    </MenuItem>
+                  )}
+                  {hasUnreadNotifications && (
+                    <MenuItem
+                      onClick={markAllNotificationsAsRead}
+                      color="gray.500"
+                      fontSize="sm"
+                    >
+                      Mark all as read
+                    </MenuItem>
+                  )}
+                </>
+              )}
+            </MenuList>
+          </Menu>
         </HStack>
 
         {dueDate && (
@@ -333,6 +526,23 @@ export default function Dashboard() {
                         >
                           Share
                         </MenuItem>
+                        <MenuItem
+                          icon={<FaEdit />}
+                          onClick={() => handleEdit(todo)}
+                        >
+                          Edit
+                        </MenuItem>
+                        <MenuItem
+                          icon={<FaTrash />}
+                          onClick={() => {
+                            if (window.confirm('Are you sure you want to delete this todo?')) {
+                              deleteTodo(todo.id)
+                            }
+                          }}
+                          color="red.500"
+                        >
+                          Delete
+                        </MenuItem>
                       </MenuList>
                     </Menu>
                   )}
@@ -342,48 +552,165 @@ export default function Dashboard() {
           ))}
         </Stack>
 
-        {notifications.length > 0 && (
-          <Box p={4} borderWidth="1px" borderRadius="lg" bg="white">
-            <HStack mb={4}>
-              <FaBell />
-              <Text fontWeight="bold">Notifications</Text>
-            </HStack>
-            <Stack spacing={2}>
-              {notifications.map((notification) => (
-                <Text key={notification.id} fontSize="sm">
-                  {notification.content}
-                </Text>
-              ))}
-            </Stack>
-          </Box>
-        )}
-      </Stack>
+        <Modal isOpen={isOpen} onClose={onClose}>
+          <ModalOverlay />
+          <ModalContent>
+            <ModalHeader>Share Todo</ModalHeader>
+            <ModalCloseButton />
+            <ModalBody>
+              <FormControl>
+                <FormLabel>Share with (email)</FormLabel>
+                <Input
+                  value={shareEmail}
+                  onChange={(e) => setShareEmail(e.target.value)}
+                  placeholder="Enter email address"
+                />
+              </FormControl>
+            </ModalBody>
+            <ModalFooter>
+              <Button colorScheme="blue" mr={3} onClick={shareTodo}>
+                Share
+              </Button>
+              <Button variant="ghost" onClick={onClose}>
+                Cancel
+              </Button>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
 
-      <Modal isOpen={isOpen} onClose={onClose}>
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Share Todo</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody>
-            <FormControl>
-              <FormLabel>Share with (email)</FormLabel>
-              <Input
-                value={shareEmail}
-                onChange={(e) => setShareEmail(e.target.value)}
-                placeholder="Enter email address"
-              />
-            </FormControl>
-          </ModalBody>
-          <ModalFooter>
-            <Button colorScheme="blue" mr={3} onClick={shareTodo}>
-              Share
-            </Button>
-            <Button variant="ghost" onClick={onClose}>
-              Cancel
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+        <Modal isOpen={isEditOpen} onClose={onEditClose}>
+          <ModalOverlay />
+          <ModalContent>
+            <ModalHeader>Edit Todo</ModalHeader>
+            <ModalCloseButton />
+            <ModalBody>
+              <Stack spacing={4}>
+                <FormControl>
+                  <FormLabel>Task</FormLabel>
+                  <Input
+                    value={editTodo}
+                    onChange={(e) => setEditTodo(e.target.value)}
+                    placeholder="Enter task"
+                  />
+                </FormControl>
+                <FormControl>
+                  <FormLabel>Due Date</FormLabel>
+                  <DatePicker
+                    selected={editDueDate}
+                    onChange={(date) => setEditDueDate(date)}
+                    dateFormat="MMMM d, yyyy"
+                    isClearable
+                    customInput={<Input />}
+                  />
+                </FormControl>
+              </Stack>
+            </ModalBody>
+            <ModalFooter>
+              <Button colorScheme="blue" mr={3} onClick={updateTodo}>
+                Save Changes
+              </Button>
+              <Button variant="ghost" onClick={onEditClose}>
+                Cancel
+              </Button>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
+
+        {/* All Notifications Modal */}
+        <Modal isOpen={isNotificationOpen} onClose={onNotificationClose} size="xl">
+          <ModalOverlay />
+          <ModalContent>
+            <ModalHeader>
+              <HStack>
+                <FaBell />
+                <Text>Notifications</Text>
+              </HStack>
+            </ModalHeader>
+            <ModalCloseButton />
+            <ModalBody>
+              <Stack spacing={4} maxH="60vh" overflowY="auto">
+                {notifications.length === 0 ? (
+                  <Text color="gray.500">No notifications</Text>
+                ) : (
+                  notifications.map((notification) => (
+                    <Box
+                      key={notification.id}
+                      p={4}
+                      borderWidth="1px"
+                      borderRadius="md"
+                      _hover={{ bg: "gray.50", cursor: "pointer" }}
+                      onClick={() => {
+                        setSelectedNotification(notification)
+                        onNotificationDetailOpen()
+                        if (!notification.read) {
+                          markNotificationAsRead(notification.id)
+                        }
+                      }}
+                    >
+                      <HStack spacing={2} align="flex-start">
+                        {!notification.read && (
+                          <Box
+                            w="2"
+                            h="2"
+                            bg="blue.500"
+                            borderRadius="full"
+                            mt={1}
+                          />
+                        )}
+                        <Stack spacing={1} flex={1}>
+                          <Text fontSize="sm">
+                            {notification.content.length > 100 
+                              ? `${notification.content.substring(0, 100)}...` 
+                              : notification.content}
+                          </Text>
+                          <Text fontSize="xs" color="gray.500">
+                            {new Date(notification.created_at).toLocaleDateString()} {new Date(notification.created_at).toLocaleTimeString()}
+                          </Text>
+                        </Stack>
+                      </HStack>
+                    </Box>
+                  ))
+                )}
+              </Stack>
+            </ModalBody>
+            <ModalFooter>
+              <Button variant="ghost" onClick={onNotificationClose}>
+                Close
+              </Button>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
+
+        {/* Single Notification Detail Modal */}
+        <Modal isOpen={isNotificationDetailOpen} onClose={onNotificationDetailClose}>
+          <ModalOverlay />
+          <ModalContent>
+            <ModalHeader>
+              <HStack>
+                <FaBell />
+                <Text>Notification Detail</Text>
+              </HStack>
+            </ModalHeader>
+            <ModalCloseButton />
+            <ModalBody>
+              {selectedNotification && (
+                <Stack spacing={4}>
+                  <Text>{selectedNotification.content}</Text>
+                  <Text fontSize="sm" color="gray.500">
+                    {new Date(selectedNotification.created_at).toLocaleDateString()}{' '}
+                    {new Date(selectedNotification.created_at).toLocaleTimeString()}
+                  </Text>
+                </Stack>
+              )}
+            </ModalBody>
+            <ModalFooter>
+              <Button variant="ghost" onClick={onNotificationDetailClose}>
+                Close
+              </Button>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
+      </Stack>
     </Container>
   )
 }
